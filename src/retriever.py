@@ -17,8 +17,8 @@ BATCH_SIZE    = 64
 
 TOP_K_DENSE  = 50
 TOP_K_BM25   = 50
-TOP_RERANK   = 20
-TOP_K_FINAL  = 5
+TOP_RERANK   = 30
+TOP_K_FINAL  = 10
 RRF_K        = 60
 
 
