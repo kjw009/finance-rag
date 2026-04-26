@@ -80,7 +80,7 @@ def cmd_serve(args) -> None:
     print("Ready. Starting Gradio …")
 
     def chat_fn(message: str, history: list) -> str:
-        chunks   = retriever.retrieve(message, top_k=5)
+        chunks   = retriever.retrieve(message)
         response = answer_from_chunks(message, chunks, client, LLM_MODEL)
         sources  = sorted({c.source for c in chunks})
         return response + "\n\n**Sources:**\n" + "\n".join(f"- {s}" for s in sources)
