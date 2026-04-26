@@ -15,11 +15,49 @@ RERANK_MODEL  = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 COLLECTION    = "finance_rag"
 BATCH_SIZE    = 64
 
-TOP_K_DENSE  = 50
-TOP_K_BM25   = 50
-TOP_RERANK   = 30
-TOP_K_FINAL  = 10
+TOP_K_DENSE  = 100
+TOP_K_BM25   = 100
+TOP_RERANK   = 50
+TOP_K_FINAL  = 15
 RRF_K        = 60
+
+# Maps source filename prefixes to a canonical ticker.
+# Order matters: more specific patterns first.
+_SOURCE_PATTERNS: dict[str, list[str]] = {
+    "META":  ["META_", "Meta-"],
+    "AAPL":  ["AAPL_"],
+    "GOOGL": ["GOOGL_", "goog-"],
+    "AMZN":  ["AMZN_", "Amazon-"],
+    "MSFT":  ["MSFT_"],
+    "NVDA":  ["NVDA_", "NVIDIA-"],
+    "TSLA":  ["TSLA_"],
+    "AMD":   ["AMD_"],
+}
+
+# Maps query keywords (lowercase, exact word match) to ticker.
+_QUERY_TICKER: list[tuple[set[str], str]] = [
+    ({"meta", "facebook"},           "META"),
+    ({"apple", "aapl"},              "AAPL"),
+    ({"google", "alphabet", "googl"},"GOOGL"),
+    ({"amazon", "amzn"},             "AMZN"),
+    ({"microsoft", "msft"},          "MSFT"),
+    ({"nvidia", "nvda"},             "NVDA"),
+    ({"tesla", "tsla"},              "TSLA"),
+    ({"amd"},                        "AMD"),
+]
+
+
+def _detect_ticker(query: str) -> str | None:
+    import re
+    words = set(re.sub(r"[^a-z0-9 ]", " ", query.lower()).split())
+    for keywords, ticker in _QUERY_TICKER:
+        if keywords & words:
+            return ticker
+    return None
+
+
+def _source_matches(source: str, ticker: str) -> bool:
+    return any(source.startswith(p) for p in _SOURCE_PATTERNS.get(ticker, []))
 
 
 class Retriever:
@@ -38,22 +76,41 @@ class Retriever:
         self.cross_encoder = cross_encoder
         self.id_to_idx     = {c.id: i for i, c in enumerate(all_chunks)}
 
+        # Precompute per-ticker index sets and source lists for fast filtering.
+        self._ticker_idxs: dict[str, set[int]] = {}
+        self._ticker_sources: dict[str, list[str]] = {}
+        for ticker in _SOURCE_PATTERNS:
+            idxs = {i for i, c in enumerate(all_chunks) if _source_matches(c.source, ticker)}
+            srcs = list({all_chunks[i].source for i in idxs})
+            self._ticker_idxs[ticker]   = idxs
+            self._ticker_sources[ticker] = srcs
+
     # ── Public entry point ────────────────────────────────────────────────────
 
     def retrieve(self, query: str, top_k: int = TOP_K_FINAL) -> list[Chunk]:
-        dense  = self._dense(query)
-        sparse = self._bm25(query)
+        ticker     = _detect_ticker(query)
+        valid_idxs = self._ticker_idxs.get(ticker) if ticker else None
+        sources    = self._ticker_sources.get(ticker) if ticker else None
+
+        dense  = self._dense(query, sources=sources)
+        sparse = self._bm25(query, valid_idxs=valid_idxs)
         fused  = self._rrf(dense, sparse)
         ranked = self._rerank(query, fused, top_n=top_k)
         return [self.all_chunks[idx] for idx, _ in ranked]
 
     # ── Internal stages ───────────────────────────────────────────────────────
 
-    def _dense(self, query: str, k: int = TOP_K_DENSE) -> list[tuple[int, float]]:
-        vec = self.bi_encoder.encode(query, convert_to_numpy=True).tolist()
-        results = self.collection.query(
-            query_embeddings=[vec], n_results=k, include=["distances"]
-        )
+    def _dense(
+        self,
+        query: str,
+        k: int = TOP_K_DENSE,
+        sources: list[str] | None = None,
+    ) -> list[tuple[int, float]]:
+        vec    = self.bi_encoder.encode(query, convert_to_numpy=True).tolist()
+        kwargs: dict = {"query_embeddings": [vec], "n_results": k, "include": ["distances"]}
+        if sources:
+            kwargs["where"] = {"source": {"$in": sources}}
+        results = self.collection.query(**kwargs)
         hits = []
         for cid, dist in zip(results["ids"][0], results["distances"][0]):
             idx = self.id_to_idx.get(cid)
@@ -61,10 +118,21 @@ class Retriever:
                 hits.append((idx, 1 / (1 + dist)))
         return hits
 
-    def _bm25(self, query: str, k: int = TOP_K_BM25) -> list[tuple[int, float]]:
+    def _bm25(
+        self,
+        query: str,
+        k: int = TOP_K_BM25,
+        valid_idxs: set[int] | None = None,
+    ) -> list[tuple[int, float]]:
         scores = self.bm25.get_scores(query.lower().split())
-        top    = scores.argsort()[::-1][:k]
-        return [(int(i), float(scores[i])) for i in top]
+        order  = scores.argsort()[::-1]
+        results = []
+        for i in order:
+            if valid_idxs is None or int(i) in valid_idxs:
+                results.append((int(i), float(scores[i])))
+                if len(results) >= k:
+                    break
+        return results
 
     def _rrf(
         self,
@@ -95,7 +163,6 @@ class Retriever:
         collection_name: str,
         all_chunks: list[Chunk],
     ) -> "Retriever":
-        """Load models and connect to an existing ChromaDB collection."""
         print("Loading bi-encoder …")
         bi_encoder = SentenceTransformer(EMBED_MODEL)
         print("Loading cross-encoder …")
