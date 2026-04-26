@@ -13,6 +13,9 @@ import pickle
 import argparse
 from pathlib import Path
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from src.parser    import parse_all
 from src.retriever import Retriever, build_index
