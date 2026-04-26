@@ -1,0 +1,23 @@
+openai 
+chromadb 
+sentence-transformers 
+pdfplumber 
+pypdf 
+pytesseract 
+pdf2image 
+opencv-python-headless 
+docling 
+rank-bm25 
+ragas 
+beautifulsoup4 
+trafilatura 
+requests 
+playwright 
+streamlit 
+gradio 
+python-dotenv 
+tiktoken 
+numpy 
+pandas
+poppler-utils  # for pdf2image on Linux
+AutoProcessor

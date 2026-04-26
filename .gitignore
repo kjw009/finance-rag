@@ -1,0 +1,6 @@
+.env
+
+/datasets
+/chroma_db
+
+__pycache__
