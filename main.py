@@ -5,6 +5,7 @@ Commands:
   python main.py index            Parse all docs, embed, and store in ChromaDB.
   python main.py query "..."      Answer a single question and exit.
   python main.py chat             Interactive REPL (Ctrl-C or 'exit' to quit).
+  python main.py serve            Launch the Gradio web UI.
 """
 
 import os
@@ -66,6 +67,34 @@ def cmd_query(args) -> None:
     print(response)
 
 
+def cmd_serve(args) -> None:
+    import gradio as gr
+    from src.generator import answer_from_chunks
+
+    print("Loading retriever …")
+    retriever = load_retriever()
+    client    = get_llm_client()
+    print("Ready. Starting Gradio …")
+
+    def chat_fn(message: str, history: list) -> str:
+        chunks   = retriever.retrieve(message, top_k=5)
+        response = answer_from_chunks(message, chunks, client, LLM_MODEL)
+        sources  = sorted({c.source for c in chunks})
+        return response + "\n\n**Sources:**\n" + "\n".join(f"- {s}" for s in sources)
+
+    demo = gr.ChatInterface(
+        fn=chat_fn,
+        title="Finance RAG",
+        description="Ask questions about SEC filings and earnings reports from the corpus.",
+        examples=[
+            "What were the key risks mentioned in Apple's latest 10-K filing?",
+            "What are the main products highlighted in Google's latest 10-K?",
+            "What was Meta's total revenue for the year ended December 31, 2025?"
+        ],
+    )
+    demo.launch(share=args.share)
+
+
 def cmd_chat(_args) -> None:
     print("Loading retriever …")
     retriever = load_retriever()
@@ -103,6 +132,11 @@ def main() -> None:
 
     sub.add_parser("chat", help="Start an interactive Q&A session")
 
+    serve_parser = sub.add_parser("serve", help="Launch the Gradio web UI")
+    serve_parser.add_argument(
+        "--share", action="store_true", help="Create a public Gradio URL (72 h)"
+    )
+
     args = parser.parse_args()
 
     if args.command == "index":
@@ -111,6 +145,8 @@ def main() -> None:
         cmd_query(args)
     elif args.command == "chat":
         cmd_chat(args)
+    elif args.command == "serve":
+        cmd_serve(args)
 
 
 if __name__ == "__main__":
