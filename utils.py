@@ -52,6 +52,7 @@ class Chunk:
     section: str | None = None          # e.g. "II.A.1" for nested structures
     content_type: str = "prose"         # prose | table | list | heading
     document_type: str | None = None    # contract | report | newsletter | etc
+    filing_date: str | None = None      # ISO date parsed from filename, e.g. "2026-02-05"
     extra: dict = field(default_factory=dict)
 
     def metadata(self) -> dict:
@@ -66,6 +67,8 @@ class Chunk:
             md["section"] = self.section
         if self.document_type:
             md["document_type"] = self.document_type
+        if self.filing_date:
+            md["filing_date"] = self.filing_date
         for k, v in self.extra.items():
             if isinstance(v, (str, int, float, bool)):
                 md[k] = v
